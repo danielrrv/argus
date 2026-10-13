@@ -9,7 +9,7 @@ pub const Timers = struct {
     const TimerQueue = DoublyLinkedList(TimerHandle);
 
     pub var next_id: std.atomic.Value(i32) = .init(0);
-    
+
     // Inserts a timer callback in the timers queue.
     pub fn schedule(queue: *TimerQueue, t: *TimerQueue.Node, event_loop_ctx: *EventLoopContext) void {
         t.data.schedule_time = event_loop_ctx.time.addDuration(.{ .clock = .boot, .raw = std.Io.Duration.fromMilliseconds(t.data.time_ms) });
@@ -37,6 +37,11 @@ pub const Timers = struct {
             // Otherwise, t should be larger than current.
             queue.add_after(current, &t.queue);
         }
+    }
+
+    pub fn cancel(queue: *TimerQueue, t: *TimerQueue.Node) !void {
+        if (!queue.exist(&t.queue)) return;
+        _= queue.delete(&t.queue);
     }
 
     pub fn poll_timers(queue: *TimerQueue, event_loop_ctx: *EventLoopContext) !void {
@@ -303,11 +308,11 @@ test "Timers.poll_timers" {
     try std.testing.expect(Timers.TimerQueue.Node.fromQueue(timerQueue.next).data.time_ms == timer_handler3.time_ms);
 
     cxt.time = cxt.time.addDuration(.{ .raw = std.Io.Duration.fromMilliseconds(130), .clock = .boot });
-     // Timerhandle finishes after 20
+    // Timerhandle finishes after 20
     try std.testing.expect(t3.data.schedule_time.raw.toMilliseconds() > 0);
     try Timers.poll_timers(&timerQueue, &cxt);
     try std.testing.expect(wr3.spy);
-     // Timerhandle finishes after 300
+    // Timerhandle finishes after 300
     cxt.time = cxt.time.addDuration(.{ .raw = std.Io.Duration.fromMilliseconds(400), .clock = .boot });
     try Timers.poll_timers(&timerQueue, &cxt);
     try std.testing.expect(wr1.spy);
@@ -315,4 +320,50 @@ test "Timers.poll_timers" {
     cxt.time = cxt.time.addDuration(.{ .raw = std.Io.Duration.fromMilliseconds(601), .clock = .boot });
     try Timers.poll_timers(&timerQueue, &cxt);
     try std.testing.expect(wr2.spy);
+}
+
+test "Timers.cancel" {
+    const HandlerArguments = struct { w: std.Io.Writer, io: std.Io, alloc: std.mem.Allocator, spy: bool };
+    // 1. Setup your testing buffer/writer environment
+    var buffer: [128]u8 = undefined;
+    const stdout = std.Io.Writer.fixed(&buffer);
+
+    var timerQueue: Timers.TimerQueue = undefined;
+    timerQueue.init();
+    const handle1 = struct {
+        fn callback(args: *anyopaque) anyerror!void {
+            const ctx: *HandlerArguments = @ptrCast(@alignCast(args));
+            const message = try std.fmt.allocPrint(ctx.alloc, "Callback from handle1", .{});
+            defer ctx.alloc.free(message); // Free the memory when done
+            std.debug.print("{s}\n", .{message});
+            ctx.spy = true;
+        }
+    }.callback;
+
+    var wr1: HandlerArguments = .{
+        .w = stdout,
+        .io = std.testing.io, // Assign the global test execution I/O engine
+        .alloc = std.testing.allocator,
+        .spy = false,
+    };
+
+    const timer_handler1 = TimerHandle.init(300, &handle1, @ptrCast(&wr1));
+
+    var t1: Timers.TimerQueue.Node = undefined;
+    t1.init(timer_handler1);
+    var cxt: EventLoopContext = .{
+        .io = std.testing.io,
+        .time = Timestamp.now(std.testing.io, .boot),
+    };
+    Timers.schedule(&timerQueue, &t1, &cxt);
+
+    try std.testing.expect(!timerQueue.is_empty());
+    try std.testing.expect(timerQueue.size() == 1);
+    try std.testing.expect(Timers.TimerQueue.Node.fromQueue(timerQueue.next).data.time_ms == timer_handler1.time_ms);
+
+    cxt.time = cxt.time.addDuration(.{ .raw = std.Io.Duration.fromMilliseconds(10000), .clock = .boot });
+    try Timers.cancel(&timerQueue,&t1);
+    try Timers.poll_timers(&timerQueue, &cxt);
+
+    try std.testing.expect(timerQueue.size()==0);
 }

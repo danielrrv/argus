@@ -98,6 +98,8 @@ pub fn DoublyLinkedList(comptime T: type) type {
             tail.prev.next = self;
             //2. Self's tail should point to the previous element before it.
             self.prev = tail.prev;
+            //Wrap up the queue with itself.
+            tail.init();
             return Node.fromQueue(tail);
         }
 
@@ -133,6 +135,22 @@ pub fn DoublyLinkedList(comptime T: type) type {
             }
         }
 
+        pub fn delete(self: *Self, o: *Self) bool {
+            if (self.is_empty() or o.is_empty()) return false;
+
+            var current = self.next;
+            while (current != self) {
+                if (current == o) {
+                    current.prev.next = current.next;
+                    current.next.prev = current.prev;
+                    current.init();
+                    return true;
+                }
+                current = current.next;
+            }
+            return false;
+        }
+
         // Remove a batch of T from Queue.
         pub fn remove(self: *Self, batch: *Self) bool {
             if (self.is_empty() and batch.is_empty()) return false;
@@ -157,7 +175,6 @@ pub fn DoublyLinkedList(comptime T: type) type {
             //See https://github.com/nodejs/node/blob/main/deps/uv/src/queue.h#L85
             if (left) |l| {
                 if (right) |r| {
-                    std.debug.print("left={s}, right={s}\n", .{ Node.fromQueue(l).data, Node.fromQueue(r).data });
                     // The previous element before the head of batch should point to next vaue after tail.
                     l.prev.next = r.next;
                     // The next value after the tail of batch should point to previous element before the head of batch.
@@ -539,6 +556,32 @@ test "queue.shift" {
     if (first) |f| {
         try std.testing.expectEqualStrings(f.data, city_a.data);
         try std.testing.expect(&city_b.queue == main_queue.next);
-        try std.testing.expect(main_queue.size()==3);
+        try std.testing.expect(main_queue.size() == 3);
     }
+}
+
+
+test "queue.delete" {
+    const QueueOfU8 = DoublyLinkedList([]const u8);
+    var city_a: QueueOfU8.Node = undefined;
+    city_a.init("NY");
+    var city_b: QueueOfU8.Node = undefined;
+    city_b.init("MT");
+    var city_c: QueueOfU8.Node = undefined;
+    city_c.init("DC");
+    var city_d: QueueOfU8.Node = undefined;
+    city_d.init("WT");
+
+    var main_queue: QueueOfU8 = undefined;
+
+    main_queue.init();
+
+    main_queue.add_at_end(&city_a.queue);
+    main_queue.add_at_end(&city_b.queue);
+    main_queue.add_at_end(&city_c.queue);
+    main_queue.add_at_end(&city_d.queue);
+    try std.testing.expect(main_queue.exist(&city_b.queue));
+    _ = main_queue.delete(&city_b.queue);
+    try std.testing.expect(!main_queue.exist(&city_b.queue));
+    
 }
